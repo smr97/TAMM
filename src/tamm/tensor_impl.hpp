@@ -9,6 +9,7 @@
 #include "tamm/mem_profiler.hpp"
 #include "tamm/memory_manager_local.hpp"
 #include "tamm/tensor_base.hpp"
+#include "tamm/fastcc/contract.hpp"
 #include <functional>
 #include <gsl/span>
 #include <type_traits>
@@ -549,7 +550,37 @@ public:
 
   virtual bool is_block_cyclic() { return false; }
 
+  fastcc::ListTensor<T> get_listtensor() { return list_tensor; }
+  fastcc::FastccTensor<T> get_fastcctensor() { return fastcc_tensor; }
+
+  void set_listtensor(fastcc::ListTensor<T> sparse_tensor) {
+    list_tensor = sparse_tensor;
+  }
+  void set_fastcctensor(fastcc::FastccTensor<T> sparse_tensor) {
+    fastcc_tensor = sparse_tensor;
+  }
+  void copy_listtensor(){
+    this->fastcc_tensor = this->list_tensor.to_tensor();
+  }
+  void copy_destroy_listtensor(){
+    this->fastcc_tensor = this->list_tensor.to_tensor();
+    this->list_tensor.drop();
+  }
+  void set_fastcc_shape(IntLabelVec shape){
+    this->sparse_labels = shape;
+  }
+  IntLabelVec get_fastcc_shape(){
+    return this->sparse_labels;
+  }
+  void fill_data_from_listtensor(){
+    std::vector<int> permutation = this->sparse_labels;
+    this->list_tensor.write_to_pointer(this->access_local_buf(), permutation);
+    this->list_tensor.drop();
+  }
 protected:
+  fastcc::ListTensor<T> list_tensor;
+  fastcc::FastccTensor<T> fastcc_tensor;
+  IntLabelVec sparse_labels;
   std::shared_ptr<Distribution> distribution_;  /**< shared pointer to associated Distribution */
   MemoryRegion*                 mpb_ = nullptr; /**< Raw pointer memory region (default null) */
   ProcList                      proc_list_ = {};

@@ -2,9 +2,11 @@
 #include "timer.hpp"
 #include <omp.h>
 #include <forward_list>
+#include <fstream>
 #include <list>
 #include <random>
 #include <cmath>
+namespace tamm::fastcc{
 template<class DT> class NNZ;
 
 template <class DT> class CompactNNZ {
@@ -16,7 +18,13 @@ public:
   DT get_data() const { return data; }
   CompactCordinate get_cord() const { return cord; }
   std::string to_string() {
-    return cord.to_string() + ": " + std::to_string(data);
+      if constexpr (std::is_floating_point<DT>::value) {
+          return cord.to_string() + ": " + std::to_string(data);
+      }
+      else {
+          exit(1);
+      }
+    //return cord.to_string() + ": " + std::to_string(data);
   }
 };
 
@@ -37,12 +45,14 @@ public:
   std::string to_string() { return nnz.to_string(); }
 };
 
+
 template <class DT> class ListTensor {
   NNZNode<DT>* head = nullptr;
   NNZNode<DT>* tail = nullptr;
   int dimensionality = 0;
   int thread_id = 0;
   uint64_t count = 0;
+  int* shape = nullptr;
 
 public:
   ListTensor(int dimensionality = 0, int thread_id=0):dimensionality(dimensionality), thread_id(thread_id) {}
@@ -62,15 +72,67 @@ public:
         tail = new_node;
     }
   }
+  void set_shape(std::vector<int> &some_shape) {
+    this->shape = new int[some_shape.size()];
+    for (int i = 0; i < some_shape.size(); i++) {
+        this->shape[i] = some_shape[i];
+    }
+  }
+  void set_shape(int* some_shape) {
+    this->shape = some_shape;
+  }
+  int* get_shape(){ // the pointer she told you not to worry about
+      return shape;
+  }
+  NNZNode<DT>* get_head(){ // not safe, but when you really need head
+      return head;
+  }
   int compute_nnz_count(){
       return count;
   }
+  void write_to_pointer(DT* destination, std::vector<int> gather_positions = {}){
+      if(this->head == nullptr){
+          std::cerr << "ListTensor is empty, cannot write to pointer" << std::endl;
+          exit(1);
+      }
+      if(this->shape == nullptr){
+          std::cerr << "Shape is not set, cannot write to pointer" << std::endl;
+          exit(1);
+      }
+      if(gather_positions.size() > 0) {
+          BoundedPosition gather(gather_positions);
+          for(NNZNode<DT>* current = head; current != nullptr; current = current->get_next()) {
+            destination[current->get_nnz().get_cord().gather_linearize(gather, shape)] =
+              current->get_nnz().get_data();
+          }
+      }
+      else {
+          for(NNZNode<DT>* current = head; current != nullptr; current = current->get_next()) {
+            destination[current->get_nnz().get_cord().linearize(shape)] =
+              current->get_nnz().get_data();
+          }
+      }
+  }
   int run_through_nnz(){
+      if(this->head == nullptr){
+          return 0;
+      }
       int count = 0;
       for(NNZNode<DT>* current = head; current != nullptr; current = current->get_next()){
           count++;
       }
       return count;
+  }
+  CompactCordinate get_cord_at(int index){
+      NNZNode<DT>* current = head;
+      for(int i = 0; i < index; i++){
+          current = current->get_next();
+          if (current == nullptr){
+              std::cerr << "Index out of bounds to get coordinate out of list tensor" << std::endl;
+              exit(1);
+          }
+      }
+      return current->get_nnz().get_cord();
   }
   int get_dimensionality(){
       if(this->dimensionality == 0){
@@ -99,11 +161,37 @@ public:
       }
       return str;
   }
+  void write(std::string filename){
+      std::ofstream myfile(filename);
+      myfile.open(filename);
+      for(int i = 0; i < this->get_dimensionality(); i++){
+          myfile << this->shape[i] << " ";
+      }
+      myfile << "\n";
+      myfile <<  this->to_string();
+      myfile.close();
+  }
+      
+  //void write(std::string filename){
+  //    std::ofstream myfile(filename);
+  //    myfile.open(filename);
+  //    for(int i = 0; i < this->get_dimensionality(); i++){
+  //        myfile << this->shape[i] << " ";
+  //    }
+  //    myfile << "\n";
+  //    myfile <<  this->to_string();
+  //    myfile.close();
+  //}
   template<class RES, class OTHER>
-  ListTensor<RES> multiply_3d(ListTensor<OTHER>& other, CoOrdinate left_batch,
-                              CoOrdinate left_contr, CoOrdinate left_ex,
+  ListTensor<RES> multiply_3d(FastccTensor<OTHER>& other, BoundedPosition left_batch,
+                              BoundedPosition left_contr, BoundedPosition left_ex,
                               CoOrdinate right_batch, CoOrdinate right_contr,
                               CoOrdinate right_ex);
+  template<class RES, class OTHER>
+  ListTensor<RES> multiply_3d(ListTensor<OTHER>& other, BoundedPosition left_batch,
+                              BoundedPosition left_contr, BoundedPosition left_ex,
+                              BoundedPosition right_batch, BoundedPosition right_contr,
+                              BoundedPosition right_ex);
   FastccTensor<DT> to_tensor() {
       FastccTensor<DT> result;
       for (NNZNode<DT> *current = head; current != nullptr;
@@ -114,8 +202,28 @@ public:
       }
       assert(this->compute_nnz_count() == result.get_size());
       assert(this->run_through_nnz() == result.get_size());
+      result._infer_dimensionality();
+      std::vector<int> my_shape;
+      if(this->shape != nullptr){
+          assert(this->dimensionality > 0);
+          for(int i = 0; i < this->get_dimensionality(); i++){
+              my_shape.push_back(this->shape[i]);
+          }
+          result.set_shape(my_shape);
+      } else{
+          result._infer_shape();
+      }
       
       return result;
+  }
+  // drops the references held by this tensor.
+  void drop() {
+    head = nullptr;
+    tail = nullptr;
+    count = 0;
+    thread_id = 0;
+    dimensionality = 0;
+    shape = nullptr;
   }
 };
 
@@ -221,4 +329,38 @@ public:
       }
     }
   }
+
+  InputTensorMap3D(ListTensor<DT> &base, BoundedPosition outermost, BoundedPosition middle, BoundedPosition lowest, uint64_t max_outermost_val){
+      assert(base.get_shape() != nullptr);
+    indexed_tensor = (outermost_type)calloc(max_outermost_val, sizeof(middle_type));
+    if(outermost.get_dimensionality() == 0){
+      assert(max_outermost_val == 1);
+    }
+    for(int _i = 0; _i < max_outermost_val; _i++){
+      indexed_tensor[_i] = middle_type();
+    }
+    for(NNZNode<DT>* current = base.get_head(); current != nullptr; current = current->get_next()){
+      uint64_t outer_index = 0;
+      if(outermost.get_dimensionality() > 0){
+        outer_index = current->get_nnz().get_cord().gather_linearize(outermost, base.get_shape());
+      }
+      uint64_t middle_index = DNE;
+      if(middle.get_dimensionality() > 0){
+        middle_index = current->get_nnz().get_cord().gather_linearize(middle, base.get_shape());
+      }
+      uint64_t lowest_index = DNE;
+      if(lowest.get_dimensionality() > 0){
+        lowest_index = current->get_nnz().get_cord().gather_linearize(lowest, base.get_shape());
+      }
+      middle_type &middle_slice = indexed_tensor[outer_index];
+      auto lowest_iter = middle_slice.find(middle_index);
+      if(lowest_iter != middle_slice.end()){
+        lowest_iter->second.push_back({lowest_index, current->get_nnz().get_data()});
+      } else {
+        lowest_type new_lowest = {{lowest_index, current->get_nnz().get_data()}};
+        middle_slice[middle_index] = new_lowest;
+      }
+    }
+  }
 };
+}

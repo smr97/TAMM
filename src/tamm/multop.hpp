@@ -8,6 +8,7 @@
 #include <memory>
 #include <unordered_set>
 #include <vector>
+#include <chrono>
 
 // #include "tamm/block_operations.hpp"
 #include "tamm/block_mult_plan.hpp"
@@ -29,6 +30,8 @@ class MultOp;
 } // namespace tamm
 
 namespace tamm::internal {
+    static int tensor_count = 0;
+    static int multop_count = 0;
 
 template<typename T, typename LabeledTensorT1, typename LabeledTensorT2, typename LabeledTensorT3>
 struct MultOpPlanBase {
@@ -276,8 +279,8 @@ public:
   using TensorElType2 = typename LabeledTensorT2::element_type;
   using TensorElType3 = typename LabeledTensorT3::element_type;
 
-  template <typename DT> FastccTensor<DT> make_tensor(std::vector<DT> &data, std::vector<size_t> &dims) {
-    FastccTensor<DT> tensor;
+  template <typename DT> fastcc::FastccTensor<DT> make_tensor(std::vector<DT> &data, std::vector<size_t> &dims) {
+    fastcc::FastccTensor<DT> tensor;
     std::cout<<"size of nonzeors " <<data.size()<<std::endl;
     std::cout<<"dimensionality of tensor " <<dims.size()<<std::endl;
     for(int i = 0; i < data.size(); i++) {
@@ -296,24 +299,35 @@ public:
     return tensor;
   }
 
-  void execute_sparse(ExecutionContext& ec) {
+  void execute_sparse(ExecutionContext& ec, ExecutionHW hw) {
+      std::cout<<"Executing sparse kernel index "<<internal::multop_count++<<std::endl;
     // TODO add constexpr enable for selected types only
-    std::cout << " sparse kernel called" << std::endl;
     EXPECTS(!is_assign_);
-    std::cout << "lhs labels are " << std::endl;
-    for(auto& lbl: lhs_int_labels_) { std::cout << lbl << " "; }
-    std::cout << std::endl;
+    std::chrono::high_resolution_clock::time_point start;
+    std::chrono::high_resolution_clock::time_point end  ;
+    start = std::chrono::high_resolution_clock::now();
     std::set<IntLabel> lhs_int_labels_set(lhs_int_labels_.begin(), lhs_int_labels_.end());
-    std::cout << "rhs1 labels are " << std::endl;
-    for(auto& lbl: rhs1_int_labels_) { std::cout << lbl << " "; }
-    std::cout << std::endl;
+    std::vector<int> rhs1_fastcc_shape;
+    if(rhs1_.tensor().get_fastcc_shape().size() > 0) {
+        //std::cout << "rhs1 tensor has fastcc shape" << std::endl;
+        //for(auto& lbl: rhs1_.tensor().get_fastcc_shape()) { std::cout << lbl << " "; }
+        //std::cout<<std::endl;
+        rhs1_fastcc_shape = rhs1_.tensor().get_fastcc_shape();
+    }
     std::set<IntLabel> rhs1_int_labels_set(rhs1_int_labels_.begin(), rhs1_int_labels_.end());
-    std::cout << "rhs2 labels are " << std::endl;
-    for(auto& lbl: rhs2_int_labels_) { std::cout << lbl << " "; }
-    std::cout << std::endl;
+    //std::cout << "rhs2 labels are " << std::endl;
+    std::vector<int> rhs2_fastcc_shape;
+    //for(auto& lbl: rhs2_int_labels_) { std::cout << lbl << " "; } std::cout << std::endl;
+    if(rhs2_.tensor().get_fastcc_shape().size() > 0) {
+        //std::cout << "rhs2 tensor has fastcc shape" << std::endl;
+        //for(auto& lbl: rhs2_.tensor().get_fastcc_shape()) { std::cout << lbl << " "; }
+        //std::cout<<std::endl;
+        rhs2_fastcc_shape = rhs2_.tensor().get_fastcc_shape();
+    }
+    //std::cout << std::endl;
     std::set<IntLabel> rhs2_int_labels_set(rhs2_int_labels_.begin(), rhs2_int_labels_.end());
-    std::cout << std::endl;
-    std::cout<<"Contraction labels are "<<std::endl;
+    //std::cout << std::endl;
+    //std::cout<<"Contraction labels are "<<std::endl;
     
     std::set<IntLabel> left_and_right;
     std::set_intersection(rhs1_int_labels_set.begin(), rhs1_int_labels_set.end(),
@@ -323,121 +337,265 @@ public:
     std::set_difference(left_and_right.begin(), left_and_right.end(),
                         lhs_int_labels_set.begin(), lhs_int_labels_set.end(),
                         std::inserter(contraction_labels_set, contraction_labels_set.begin()));
-    for(auto c: contraction_labels_set) { std::cout << c << " "; }
-    std::cout<<std::endl;
+    //for(auto c: contraction_labels_set) { std::cout << c << " "; }
+    //std::cout<<std::endl;
     std::set<IntLabel> batch_labels_set;
     std::set_intersection(left_and_right.begin(), left_and_right.end(),
                           lhs_int_labels_set.begin(), lhs_int_labels_set.end(),
                           std::inserter(batch_labels_set, batch_labels_set.begin()));
-    std::cout<<"Batch labels are "<<std::endl;
-    for(auto c: batch_labels_set) { std::cout << c << " "; }
-    std::cout<<std::endl;
+    //std::cout<<"Batch labels are "<<std::endl;
+    //for(auto c: batch_labels_set) { std::cout << c << " "; }
+    //std::cout<<std::endl;
     std::set<IntLabel> left_labels_set;
     std::set_difference(rhs1_int_labels_set.begin(), rhs1_int_labels_set.end(),
                         left_and_right.begin(), left_and_right.end(),
                         std::inserter(left_labels_set, left_labels_set.begin()));
-    std::cout<<"Left labels are "<<std::endl;
-    for(auto c: left_labels_set) { std::cout << c << " "; }
-    std::cout<<std::endl;
+    //std::cout<<"Left labels are "<<std::endl;
+    //for(auto c: left_labels_set) { std::cout << c << " "; }
+    //std::cout<<std::endl;
     std::set<IntLabel> right_labels_set;
     std::set_difference(rhs2_int_labels_set.begin(), rhs2_int_labels_set.end(),
                         left_and_right.begin(), left_and_right.end(),
                         std::inserter(right_labels_set, right_labels_set.begin()));
-    std::cout<<"Right labels are "<<std::endl;
-    for(auto c: right_labels_set) { std::cout << c << " "; }
-    std::cout<<std::endl;
+    //std::cout<<"Right labels are "<<std::endl;
+    //for(auto c: right_labels_set) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+
 
     // print shape of left tensor
     auto                lhs_tis_vec  = lhs_.tensor().tiled_index_spaces();
     auto                rhs1_tis_vec = rhs1_.tensor().tiled_index_spaces();
     auto                rhs2_tis_vec = rhs2_.tensor().tiled_index_spaces();
-    std::vector<size_t> dims_sizes_lhs;
+    std::vector<int> dims_sizes_lhs;
     std::vector<size_t> dims_sizes_rhs1;
     std::vector<size_t> dims_sizes_rhs2;
 
-    for(const auto& tis: lhs_tis_vec) { dims_sizes_lhs.push_back(tis.max_num_indices()); }
+    for(const auto& tis: lhs_tis_vec) { dims_sizes_lhs.push_back(int(tis.max_num_indices())); }
 
     for(const auto& tis: rhs1_tis_vec) { dims_sizes_rhs1.push_back(tis.max_num_indices()); }
 
     for(const auto& tis: rhs2_tis_vec) { dims_sizes_rhs2.push_back(tis.max_num_indices()); }
 
     LabelLoopNest               loop_nest1{rhs1_.labels()};
-    FastccTensor<TensorElType2> op_left;
-    for(auto itval: loop_nest1) {
-        const IndexVector          blockid = internal::translate_blockid(itval, rhs1_);
-        size_t                     size    = rhs1_.tensor().block_size(blockid);
-        std::vector<TensorElType2> buf(size);
-        rhs1_.tensor().get(blockid, buf);
-        op_left = make_tensor(buf, dims_sizes_rhs1);
-    }
-    std::cout << "number of nonzeros in op_left is " << op_left.get_nonzeros().size() << std::endl;
+    fastcc::ListTensor<TensorElType2> op_left = rhs1_.tensor().get_listtensor();
+    //if(op_left.run_through_nnz() == 0) {
+    //    std::cout<<"op_left is empty"<<std::endl;
+    //}
+    fastcc::FastccTensor<TensorElType2> op_left_fallback = rhs1_.tensor().get_fastcctensor();
+    //std::cout << "number of nonzeros in op_left_fallback is " << op_left_fallback.get_nonzeros().size()
+    //          << std::endl;
 
     LabelLoopNest               loop_nest2{rhs2_.labels()};
-    FastccTensor<TensorElType3> op_right;
-    for(auto itval: loop_nest2) {
-        const IndexVector          blockid = internal::translate_blockid(itval, rhs1_);
-        size_t                     size    = rhs2_.tensor().block_size(blockid);
-        std::vector<TensorElType3> buf(size);
-        rhs2_.tensor().get(blockid, buf);
-        op_right = make_tensor(buf, dims_sizes_rhs2);
-    }
-    std::cout << "number of nonzeros in op_right is " << op_right.get_nonzeros().size()
-              << std::endl;
+    fastcc::ListTensor<TensorElType3> op_right = rhs2_.tensor().get_listtensor();
+    //if(op_right.run_through_nnz() == 0) {
+    //    std::cout<<"op_right is empty"<<std::endl;
+    //}
+    fastcc::FastccTensor<TensorElType3> op_right_fallback = rhs2_.tensor().get_fastcctensor();
+    //std::cout<<"number of nonzeros in op_right_fallback is "<<op_right_fallback.get_nonzeros().size()<<std::endl;
     std::vector<int> left_batch, right_batch, left_contr, right_contr, left_ex, right_ex;
     for(auto c: batch_labels_set) {
         int left = std::find(rhs1_int_labels_.begin(), rhs1_int_labels_.end(), c) - rhs1_int_labels_.begin();
+        if(rhs1_fastcc_shape.size() > 0) {
+            left = rhs1_fastcc_shape[left];
+        }
         int right = std::find(rhs2_int_labels_.begin(), rhs2_int_labels_.end(), c) - rhs2_int_labels_.begin();
+        if(rhs2_fastcc_shape.size() > 0) {
+            right = rhs2_fastcc_shape[right];
+        }
         left_batch.push_back(left);
         right_batch.push_back(right);
     }
     for(auto c: contraction_labels_set) {
         int left = std::find(rhs1_int_labels_.begin(), rhs1_int_labels_.end(), c) - rhs1_int_labels_.begin();
+        if(rhs1_fastcc_shape.size() > 0) {
+            left = rhs1_fastcc_shape[left];
+        }
         int right = std::find(rhs2_int_labels_.begin(), rhs2_int_labels_.end(), c) - rhs2_int_labels_.begin();
+        if(rhs2_fastcc_shape.size() > 0) {
+            right = rhs2_fastcc_shape[right];
+        }
         left_contr.push_back(left);
         right_contr.push_back(right);
     }
     for(auto l: left_labels_set) {
         int left = std::find(rhs1_int_labels_.begin(), rhs1_int_labels_.end(), l) - rhs1_int_labels_.begin();
+        if(rhs1_fastcc_shape.size() > 0) {
+            left = rhs1_fastcc_shape[left];
+        }
         left_ex.push_back(left);
     }
     for(auto r: right_labels_set) {
         int right = std::find(rhs2_int_labels_.begin(), rhs2_int_labels_.end(), r) - rhs2_int_labels_.begin();
+        if(rhs2_fastcc_shape.size() > 0) {
+            right = rhs2_fastcc_shape[right];
+        }
         right_ex.push_back(right);
     }
-    std::cout<<"left contractions are "<<std::endl;
-    for(auto c: left_contr) { std::cout << c << " "; }
-    std::cout<<std::endl;
-    std::cout<<"right contractions are "<<std::endl;
-    for(auto c: right_contr) { std::cout << c << " "; }
-    std::cout<<std::endl;
-    std::cout<<"left batch are "<<std::endl;
-    for(auto c: left_batch) { std::cout << c << " "; }
-    std::cout<<std::endl;
-    std::cout<<"right batch are "<<std::endl;
-    for(auto c: right_batch) { std::cout << c << " "; }
-    std::cout<<std::endl;
-    std::cout<<"left ex are "<<std::endl;
-    for(auto c: left_ex) { std::cout << c << " "; }
-    std::cout<<std::endl;
-    std::cout<<"right ex are "<<std::endl;
-    for(auto c: right_ex) { std::cout << c << " "; }
-    std::cout<<std::endl;
-    op_left._infer_dimensionality();
-    op_left._infer_shape();
-    op_right._infer_dimensionality();
-    op_right._infer_shape();
+    //std::cout<<"left contractions are "<<std::endl;
+    //for(auto c: left_contr) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    //std::cout<<"right contractions are "<<std::endl;
+    //for(auto c: right_contr) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    //std::cout<<"left batch are "<<std::endl;
+    //for(auto c: left_batch) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    //std::cout<<"right batch are "<<std::endl;
+    //for(auto c: right_batch) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    //std::cout<<"left ex are "<<std::endl;
+    //for(auto c: left_ex) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    //std::cout<<"right ex are "<<std::endl;
+    //for(auto c: right_ex) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    std::vector<IntLabel> fastcc_res_labels;
+    for(auto idx: left_batch) {
+        if(rhs1_fastcc_shape.size() > 0) {
+            // need to invert the index.
+            idx = std::find(rhs1_fastcc_shape.begin(), rhs1_fastcc_shape.end(), idx) - rhs1_fastcc_shape.begin();
+        }
+        fastcc_res_labels.push_back(rhs1_int_labels_[idx]);
+    }
+    for(auto idx: left_ex) { 
+        if(rhs1_fastcc_shape.size() > 0) {
+            // need to invert the index.
+            idx = std::find(rhs1_fastcc_shape.begin(), rhs1_fastcc_shape.end(), idx) - rhs1_fastcc_shape.begin();
+        }
+        fastcc_res_labels.push_back(rhs1_int_labels_[idx]);
+    }
+    for(auto idx: right_ex) {
+        if(rhs2_fastcc_shape.size() > 0) {
+            // need to invert the index.
+            idx = std::find(rhs2_fastcc_shape.begin(), rhs2_fastcc_shape.end(), idx) - rhs2_fastcc_shape.begin();
+        }
+        fastcc_res_labels.push_back(rhs2_int_labels_[idx]);
+    }
+    //std::cout<<"fastcc_res_labels are "<<std::endl;
+    //for(auto c: fastcc_res_labels) { std::cout << c << " "; }
+    std::vector<int> pos_in_fastcc(lhs_int_labels_.size(), -1);
+    for(size_t i = 0; i < lhs_int_labels_.size(); i++) {
+        auto it = std::find(fastcc_res_labels.begin(), fastcc_res_labels.end(), lhs_int_labels_[i]);
+        if(it == fastcc_res_labels.end()){
+            std::cout<<"label "<<lhs_int_labels_[i]<<" not found in fastcc_res_labels"<<std::endl;
+            exit(1);
+        }
+        pos_in_fastcc[i] = it - fastcc_res_labels.begin();
+    }
+    //std::cout<<"pos_in_fastcc is "<<std::endl;
+    //for(auto c: pos_in_fastcc) { std::cout << c << " "; }
+    //std::cout<<std::endl;
+    lhs_.tensor().set_fastcc_shape(pos_in_fastcc);
 
-    ListTensor<TensorElType1> result = op_left. template multiply_3d<double>(
-      op_right, left_batch, left_contr, left_ex, right_batch, right_contr, right_ex);
-    std::cout << "number of nonzeros in result is " << result.run_through_nnz() << std::endl;
+    fastcc::ListTensor<TensorElType1> result;
+    //std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+    // there may be situations where one of them has no ListTensor, but the other only has a ListTensor.
+    // we need to bring them both to the fallback (FastccTensor) representation and multiply.
+    if(op_left.run_through_nnz() == 0 || op_right.run_through_nnz() == 0) {
+        // if one of them is empty, we need to bring them both to the fallback representation
+        if(op_left.run_through_nnz() > 0) {
+            // std::cout<<"fallback left from list to fastcctensor"<<std::endl;
+            //rhs1_.tensor().copy_listtensor();
+            //op_left_fallback = rhs1_.tensor().get_fastcctensor();
+            end              = std::chrono::high_resolution_clock::now();
+            //std::cout
+            //  << "preamble time for fastcc kernel took "
+            //  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+            //  << " ms" << std::endl;
+            start  = std::chrono::high_resolution_clock::now();
 
+            //op_left.write("op_left" + std::to_string(internal::tensor_count++) +".tns");
+            if(hw == ExecutionHW::CPU_SPARSE_WB) {
+              rhs1_.tensor().copy_listtensor();
+              rhs1_.tensor().get_fastcctensor().write(
+                "op_left" + std::to_string(internal::tensor_count++) + ".tns");
+            }
+            result = op_left.template multiply_3d<TensorElType1>(
+              op_right_fallback, left_batch, left_contr, left_ex, right_batch, right_contr,
+              right_ex);
+            end = std::chrono::high_resolution_clock::now();
+            //std::cout
+            //  << "list times fallback fastcc kernel took "
+            //  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+            //  << " ms" << std::endl;
+        }
+        else if(op_right.run_through_nnz() > 0) {
+            // std::cout<<"fallback right from list to fastcctensor"<<std::endl;
+            end = std::chrono::high_resolution_clock::now();
+            //std::cout
+            //  << "preamble time for fastcc kernel took "
+            //  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+            //  << " ms" << std::endl;
+            start  = std::chrono::high_resolution_clock::now();
+            result = op_left_fallback.template multiply_3d<TensorElType1>(
+              op_right, left_batch, left_contr, left_ex, right_batch, right_contr, right_ex);
+            end = std::chrono::high_resolution_clock::now();
+            //std::cout
+            //  << "fallback times list fastcc kernel took "
+            //  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+            //  << " ms" << std::endl;
+        }
+        else {
+            // only fastcc tensors on both sides, need the slow kernle now.
+            end = std::chrono::high_resolution_clock::now();
+            //std::cout
+            //  << "preamble time for fastcc kernel took "
+            //  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+            //  << " ms" << std::endl;
+            start  = std::chrono::high_resolution_clock::now();
+            result = op_left_fallback.template multiply_3d<TensorElType1>(
+              op_right_fallback, left_batch, left_contr, left_ex, right_batch, right_contr, right_ex);
+            end = std::chrono::high_resolution_clock::now();
+            //std::cout
+            //  << "fallback times fallback fastcc kernel took "
+            //  << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+            //  << " ms" << std::endl;
+        }
+    }
+    else {
+        //std::cout<<"Number of nonzeros in left list tensor is "<<op_left.run_through_nnz()<<std::endl;
+        //std::cout<<"Number of nonzeros in right list tensor is "<<op_right.run_through_nnz()<<std::endl;
+        // fast path, continue with ListTensor multiplication
+        end = std::chrono::high_resolution_clock::now();
+        //std::cout << "preamble time for fastcc kernel took "
+        //          << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+        //          << " ms" << std::endl;
+        start = std::chrono::high_resolution_clock::now();
+        result = op_left.template multiply_3d<TensorElType1>(
+          op_right, left_batch, left_contr, left_ex, right_batch, right_contr, right_ex);
+        end = std::chrono::high_resolution_clock::now();
+        //std::cout<<"ListTensor times ListTensor fastcc kernel took "
+        //         << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+        //         << " ms" << std::endl;
+    }
+    //std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+    start = std::chrono::high_resolution_clock::now();
+    std::vector<int> result_fastcc_shape;
+    for(int _dimiter = 0; _dimiter < dims_sizes_lhs.size(); _dimiter++) {
+        int idx = std::find(pos_in_fastcc.begin(), pos_in_fastcc.end(), _dimiter) - pos_in_fastcc.begin();
+        result_fastcc_shape.push_back(dims_sizes_lhs[idx]);
+    }
+    //std::cout<<"shape of result is "<<std::endl;
+    //for(auto s: result_fastcc_shape) { std::cout<<s<<" "; }
+    //std::cout<<std::endl;
+    result.set_shape(result_fastcc_shape);
+    //std::cout << "Fastcc kernel took "
+    //          << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+    //          << " ms" << std::endl;
+    //std::cout << "number of nonzeros in result is " << result.run_through_nnz() << std::endl;
+    this->lhs_.set_sparse_tensor(result);
+    //std::cout<<"num nnzs in res sparse "<<this->lhs_.tensor().get_listtensor().run_through_nnz()<<std::endl;
+
+    end = std::chrono::high_resolution_clock::now();
+    //std::cout << "postamble time for fastcc kernel took "
+    //          << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0
+    //          << " ms" << std::endl;
     return;
   }
 
   void execute(ExecutionContext& ec, ExecutionHW hw = ExecutionHW::CPU) override {
-      if (hw == ExecutionHW::CPU_SPARSE){
-          std::cout<<"howdy do from CPU_SPARSE"<<std::endl;
-          return this->execute_sparse(ec);
+      if (hw == ExecutionHW::CPU_SPARSE || hw == ExecutionHW::CPU_SPARSE_WB){
+          return this->execute_sparse(ec, hw);
 
       }
     EXPECTS(!is_assign_);
@@ -588,7 +746,7 @@ public:
 #ifdef DO_NB
         DataCommunicationHandle a_nbhandle, b_nbhandle, c_nbhandle;
 
-        {
+        {// TODO use this pattern for within the multop to profile sparse.
           TimerGuard tg_get{&oprof.multOpGetTime};
           atensor.nb_get(translated_ablockid, {abuf, asize}, &a_nbhandle);
           btensor.nb_get(translated_bblockid, {bbuf, bsize}, &b_nbhandle);
